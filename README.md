@@ -30,7 +30,7 @@ CryptoBot est une plateforme complète d'analyse et de trading de cryptomonnaies
 
 ```bash
 # Cloner le dépôt
-git clone https://github.com/votre-username/crypto-bot.git
+gh repo clone clement8426/crypto_bot
 cd crypto-bot
 
 # Installer les dépendances
@@ -51,7 +51,7 @@ cp config/api_keys.env.example config/api_keys.env
 ./scripts/deploy_ec2.sh
 ```
 
-Pour des instructions détaillées, consultez notre [Guide de déploiement](docs/deployment.md).
+Pour des instructions détaillées, consultez notre [Guide de déploiement](docs/README.md).
 
 ## 📂 Structure du projet
 
@@ -74,11 +74,11 @@ Chaque dossier contient son propre README avec des informations spécifiques.
 
 ## 📚 Documentation
 
-- [Guide d'architecture](docs/architecture.md)
-- [Guide d'installation](docs/installation.md)
-- [Guide de l'API](docs/api.md)
-- [Guide de l'interface web](docs/web_interface.md)
-- [Guide des workflows](docs/workflows.md)
+- [Guide d'architecture](docs/README.md)
+- [Guide d'installation](docs/README.md)
+- [Guide de l'API](docs/README.md)
+- [Guide de l'interface web](docs/README.md)
+- [Guide des workflows](docs/README.md)
 - [Guide de contribution](CONTRIBUTING.md)
 
 ## 🔧 Configuration
@@ -96,8 +96,3 @@ Les contributions sont les bienvenues ! Consultez notre [Guide de contribution](
 ## 📝 Licence
 
 Ce projet est sous licence MIT - voir le fichier [LICENSE](LICENSE) pour plus de détails.
-
-## 📞 Support
-
-Pour toute question ou assistance, veuillez [ouvrir une issue](https://github.com/votre-username/crypto-bot/issues) ou contacter l'équipe de développement.
-# vps-crypto-bot-n8n-flask
