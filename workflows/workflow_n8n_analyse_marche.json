@@ -1,0 +1,273 @@
+{
+  "name": "Analyse Marché Crypto",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.coingecko.com/api/v3/coins/markets",
+        "sendQuery": true,
+        "queryParametersUi": {
+          "parameters": [
+            {
+              "name": "vs_currency",
+              "value": "usd"
+            },
+            {
+              "name": "ids",
+              "value": "bitcoin,ethereum,solana,cardano,binancecoin,polkadot,ripple"
+            },
+            {
+              "name": "order",
+              "value": "market_cap_desc"
+            },
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "page",
+              "value": "1"
+            },
+            {
+              "name": "sparkline",
+              "value": "false"
+            },
+            {
+              "name": "price_change_percentage",
+              "value": "1h,24h,7d"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Collecte Prix",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Mapper les identifiants coingecko aux symboles standards\nconst idToSymbol = {\n  'bitcoin': 'BTC',\n  'ethereum': 'ETH',\n  'solana': 'SOL',\n  'cardano': 'ADA',\n  'binancecoin': 'BNB',\n  'polkadot': 'DOT',\n  'ripple': 'XRP'\n};\n\n// Traiter les données de chaque crypto\nreturn $json.map(coin => {\n  // Calculer des indicateurs techniques basiques\n  const price = coin.current_price;\n  const volume = coin.total_volume;\n  const market_cap = coin.market_cap;\n  \n  // Obtenir le symbole standardisé\n  const symbol = idToSymbol[coin.id] || coin.symbol.toUpperCase();\n  \n  // Calculer le ratio volume/market cap (indicateur de liquidité)\n  const volume_to_market_cap = volume / market_cap;\n  \n  // Retourner l'objet formaté avec timestamp\n  return {\n    timestamp: new Date().toISOString(),\n    id: coin.id,\n    symbol: symbol,\n    name: coin.name,\n    price: price,\n    market_cap: market_cap,\n    total_volume: volume,\n    price_change_1h: coin.price_change_percentage_1h_in_currency,\n    price_change_24h: coin.price_change_percentage_24h_in_currency,\n    price_change_7d: coin.price_change_percentage_7d_in_currency,\n    volume_to_market_cap: volume_to_market_cap,\n    circulating_supply: coin.circulating_supply,\n    total_supply: coin.total_supply,\n    max_supply: coin.max_supply,\n    ath: coin.ath,\n    ath_change_percentage: coin.ath_change_percentage,\n    last_updated: coin.last_updated\n  };\n});"
+      },
+      "name": "Formater Données",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Calculer des indicateurs techniques pour chaque crypto\n\nconst fs = require('fs');\nconst path = '/home/crypto_bot/data/';\nconst marketDataFile = path + 'market_data.json';\n\n// Chargement des données historiques pour calculer les indicateurs\nlet historicalData = [];\ntry {\n  if (fs.existsSync(marketDataFile)) {\n    const content = fs.readFileSync(marketDataFile, 'utf8');\n    historicalData = JSON.parse(content);\n  }\n} catch (error) {\n  console.error('Erreur lors du chargement des données historiques:', error);\n}\n\n// Fonction pour calculer la moyenne mobile simple (SMA)\nfunction calculateSMA(data, period) {\n  if (data.length < period) return null;\n  \n  const sum = data.slice(0, period).reduce((acc, val) => acc + val, 0);\n  return sum / period;\n}\n\n// Fonction pour calculer le RSI (Relative Strength Index)\nfunction calculateRSI(prices, period = 14) {\n  if (prices.length < period + 1) return null;\n  \n  const deltas = [];\n  for (let i = 1; i < prices.length; i++) {\n    deltas.push(prices[i] - prices[i - 1]);\n  }\n  \n  const gains = deltas.map(d => d > 0 ? d : 0);\n  const losses = deltas.map(d => d < 0 ? Math.abs(d) : 0);\n  \n  // Calculer la moyenne des gains et des pertes\n  let avgGain = gains.slice(0, period).reduce((acc, val) => acc + val, 0) / period;\n  let avgLoss = losses.slice(0, period).reduce((acc, val) => acc + val, 0) / period;\n  \n  if (avgLoss === 0) return 100;\n  \n  // Calculer le RS et le RSI\n  const RS = avgGain / avgLoss;\n  const RSI = 100 - (100 / (1 + RS));\n  \n  return RSI;\n}\n\n// Récupérer les nouvelles données\nconst newData = $json;\n\n// Enrichir avec les indicateurs techniques\nconst enrichedData = newData.map(coin => {\n  // Récupérer l'historique de cette crypto\n  const coinHistory = historicalData.filter(entry => entry.symbol === coin.symbol)\n    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));\n  \n  // Ajouter les données actuelles pour les calculs\n  const allPrices = [coin.price, ...coinHistory.map(entry => entry.price)];\n  \n  // Calculer les indicateurs\n  const sma20 = calculateSMA(allPrices, 20);\n  const sma50 = calculateSMA(allPrices, 50);\n  const rsi14 = calculateRSI(allPrices, 14);\n  \n  // Calculer les signaux techniques\n  const priceAboveSMA20 = sma20 ? coin.price > sma20 : null;\n  const priceAboveSMA50 = sma50 ? coin.price > sma50 : null;\n  \n  // Interprétation du RSI\n  let rsiSignal = 'NEUTRAL';\n  if (rsi14 !== null) {\n    if (rsi14 > 70) rsiSignal = 'OVERBOUGHT';\n    else if (rsi14 < 30) rsiSignal = 'OVERSOLD';\n  }\n  \n  // Combiner les signaux pour une évaluation globale\n  let technicalSignal = 'NEUTRAL';\n  \n  if (priceAboveSMA20 && priceAboveSMA50) {\n    technicalSignal = 'BULLISH';\n  } else if (!priceAboveSMA20 && !priceAboveSMA50) {\n    technicalSignal = 'BEARISH';\n  }\n  \n  // Ajuster selon le RSI\n  if (rsiSignal === 'OVERBOUGHT' && technicalSignal === 'BULLISH') {\n    technicalSignal = 'BULLISH_CAUTION'; // Tendance haussière mais potentiellement en surachat\n  } else if (rsiSignal === 'OVERSOLD' && technicalSignal === 'BEARISH') {\n    technicalSignal = 'BEARISH_OPPORTUNITY'; // Tendance baissière mais potentielle opportunité\n  }\n  \n  return {\n    ...coin,\n    technical_indicators: {\n      sma20: sma20,\n      sma50: sma50,\n      rsi14: rsi14,\n      price_above_sma20: priceAboveSMA20,\n      price_above_sma50: priceAboveSMA50,\n      rsi_signal: rsiSignal\n    },\n    technical_signal: technicalSignal\n  };\n});\n\n// Fusionner avec les données existantes\nconst mergedData = [...enrichedData, ...historicalData];\n\n// Limiter à 20000 entrées max (cela correspond à environ 2-3 semaines de données)\nconst limitedData = mergedData.slice(0, 20000);\n\n// Sauvegarder les données\ntry {\n  fs.writeFileSync(marketDataFile, JSON.stringify(limitedData, null, 2));\n  \n  console.log(`Données de marché mises à jour: ${enrichedData.length} nouvelles entrées, ${limitedData.length} entrées au total`);\n} catch (error) {\n  console.error('Erreur lors de la sauvegarde des données:', error);\n}\n\n// Retourner les statistiques et un résumé des signaux\nconst signalSummary = {};\nenrichedData.forEach(coin => {\n  signalSummary[coin.symbol] = {\n    price: coin.price,\n    change_1h: coin.price_change_1h,\n    change_24h: coin.price_change_24h,\n    technical_signal: coin.technical_signal,\n    rsi: coin.technical_indicators.rsi14\n  };\n});\n\nreturn {\n  success: true,\n  timestamp: new Date().toISOString(),\n  crypto_count: enrichedData.length,\n  signals: signalSummary\n};"
+      },
+      "name": "Analyser Indicateurs",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.alternative.me/fng/",
+        "options": {}
+      },
+      "name": "Collecter Fear & Greed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        300,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Sauvegarder l'indice Fear & Greed\n\nconst fs = require('fs');\nconst path = '/home/crypto_bot/data/';\nconst fearGreedFile = path + 'fear_greed_index.json';\n\n// Obtenir les données Fear & Greed\nlet fearGreedData = {\n  value: 0,\n  value_classification: 'Neutral',\n  timestamp: new Date().toISOString()\n};\n\ntry {\n  if ($json.data && $json.data[0]) {\n    fearGreedData = {\n      value: parseInt($json.data[0].value) || 0,\n      value_classification: $json.data[0].value_classification || 'Neutral',\n      timestamp: new Date().toISOString()\n    };\n  }\n} catch (error) {\n  console.error('Erreur lors du traitement des données Fear & Greed:', error);\n}\n\n// Charger l'historique existant\nlet historicalFG = [];\ntry {\n  if (fs.existsSync(fearGreedFile)) {\n    const content = fs.readFileSync(fearGreedFile, 'utf8');\n    historicalFG = JSON.parse(content);\n  }\n} catch (error) {\n  console.error('Erreur lors du chargement des données Fear & Greed:', error);\n}\n\n// Ajouter la nouvelle entrée\nhistoricalFG.unshift(fearGreedData);\n\n// Limiter à 365 entrées max (environ 1 an)\nconst limitedFG = historicalFG.slice(0, 365);\n\n// Sauvegarder les données\ntry {\n  fs.writeFileSync(fearGreedFile, JSON.stringify(limitedFG, null, 2));\n  \n  console.log(`Fear & Greed Index mis à jour: ${fearGreedData.value} (${fearGreedData.value_classification})`);\n} catch (error) {\n  console.error('Erreur lors de la sauvegarde des données Fear & Greed:', error);\n}\n\n// Retourner les informations Fear & Greed\nreturn {\n  success: true,\n  fear_greed_index: fearGreedData,\n  history_count: limitedFG.length\n};"
+      },
+      "name": "Traiter Fear & Greed",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        500,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [],
+          "number": [
+            {
+              "value1": "={{ $json.timestamp }}",
+              "operation": "exists"
+            }
+          ]
+        },
+        "combineOperation": "any"
+      },
+      "name": "Filtre jour marché",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Générer un rapport quotidien du marché\n\nconst fs = require('fs');\nconst path = '/home/crypto_bot/data/';\nconst reportFile = path + 'market_reports.json';\n\n// Charger les rapports existants\nlet reports = [];\ntry {\n  if (fs.existsSync(reportFile)) {\n    const content = fs.readFileSync(reportFile, 'utf8');\n    reports = JSON.parse(content);\n  }\n} catch (error) {\n  console.error('Erreur lors du chargement des rapports:', error);\n}\n\n// Vérifier si un rapport a déjà été généré aujourd'hui\nconst today = new Date();\nconst todayStr = today.toISOString().split('T')[0];\n\nconst existingReport = reports.find(report => \n  report.date && report.date.startsWith(todayStr)\n);\n\n// Si un rapport existe déjà, ne pas en créer un nouveau\nif (existingReport) {\n  return {\n    success: true,\n    message: 'Un rapport a déjà été généré aujourd\\'hui',\n    existing_report: existingReport\n  };\n}\n\n// Charger les données de marché et Fear & Greed\nlet marketData = [];\nlet fearGreedData = [];\ntry {\n  const marketContent = fs.readFileSync(path + 'market_data.json', 'utf8');\n  marketData = JSON.parse(marketContent);\n  \n  const fgContent = fs.readFileSync(path + 'fear_greed_index.json', 'utf8');\n  fearGreedData = JSON.parse(fgContent);\n} catch (error) {\n  console.error('Erreur lors du chargement des données pour le rapport:', error);\n}\n\n// Organiser les données par crypto\nconst cryptoData = {};\nconst symbols = ['BTC', 'ETH', 'SOL', 'ADA', 'BNB', 'DOT', 'XRP'];\n\nsymbols.forEach(symbol => {\n  const coinData = marketData.filter(entry => entry.symbol === symbol)\n    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));\n  \n  if (coinData.length > 0) {\n    const latest = coinData[0];\n    const oneDayAgo = coinData.find(entry => {\n      const entryTime = new Date(entry.timestamp);\n      const diff = today - entryTime;\n      return diff >= 24 * 60 * 60 * 1000; // Au moins 24h d'écart\n    });\n    \n    const oneWeekAgo = coinData.find(entry => {\n      const entryTime = new Date(entry.timestamp);\n      const diff = today - entryTime;\n      return diff >= 7 * 24 * 60 * 60 * 1000; // Au moins 7 jours d'écart\n    });\n    \n    cryptoData[symbol] = {\n      current_price: latest.price,\n      current_signal: latest.technical_signal,\n      price_change_24h: oneDayAgo ? ((latest.price - oneDayAgo.price) / oneDayAgo.price * 100) : latest.price_change_24h,\n      price_change_7d: oneWeekAgo ? ((latest.price - oneWeekAgo.price) / oneWeekAgo.price * 100) : latest.price_change_7d,\n      volume_24h: latest.total_volume,\n      rsi: latest.technical_indicators?.rsi14 || null\n    };\n  }\n});\n\n// Obtenir le Fear & Greed actuel\nconst currentFG = fearGreedData.length > 0 ? fearGreedData[0] : null;\n\n// Créer le rapport\nconst report = {\n  date: today.toISOString(),\n  market_summary: {\n    btc_dominance: marketData.length > 0 ? \n      (marketData.find(entry => entry.symbol === 'BTC')?.market_cap / \n      marketData.reduce((sum, entry) => sum + entry.market_cap, 0) * 100) : null,\n    total_market_cap: marketData.reduce((sum, entry) => sum + entry.market_cap, 0),\n    fear_greed_index: currentFG ? currentFG.value : null,\n    fear_greed_label: currentFG ? currentFG.value_classification : 'Neutral',\n  },\n  crypto_data: cryptoData,\n  market_trends: {\n    bullish_count: Object.values(cryptoData).filter(data => \n      data.current_signal === 'BULLISH' || data.current_signal === 'BULLISH_CAUTION'\n    ).length,\n    bearish_count: Object.values(cryptoData).filter(data => \n      data.current_signal === 'BEARISH' || data.current_signal === 'BEARISH_OPPORTUNITY'\n    ).length,\n    neutral_count: Object.values(cryptoData).filter(data => \n      data.current_signal === 'NEUTRAL'\n    ).length,\n    overall_market_sentiment: 'NEUTRAL'\n  }\n};\n\n// Déterminer le sentiment global du marché\nif (report.market_trends.bullish_count > report.market_trends.bearish_count + report.market_trends.neutral_count) {\n  report.market_trends.overall_market_sentiment = 'BULLISH';\n} else if (report.market_trends.bearish_count > report.market_trends.bullish_count + report.market_trends.neutral_count) {\n  report.market_trends.overall_market_sentiment = 'BEARISH';\n} else if (currentFG && currentFG.value < 25) {\n  report.market_trends.overall_market_sentiment = 'EXTREME_FEAR';\n} else if (currentFG && currentFG.value > 75) {\n  report.market_trends.overall_market_sentiment = 'EXTREME_GREED';\n}\n\n// Ajouter le rapport à la liste et sauvegarder\nreports.unshift(report);\n\n// Garder seulement les 365 derniers rapports\nconst limitedReports = reports.slice(0, 365);\n\n// Sauvegarder les rapports\ntry {\n  fs.writeFileSync(reportFile, JSON.stringify(limitedReports, null, 2));\n  \n  console.log(`Rapport de marché généré pour ${todayStr}`);\n} catch (error) {\n  console.error('Erreur lors de la sauvegarde du rapport:', error);\n}\n\nreturn {\n  success: true,\n  report: report,\n  report_date: todayStr\n};"
+      },
+      "name": "Générer Rapport",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "command": "python3 /home/crypto_bot/scripts/script_analyse_correlation_crypto.py"
+      },
+      "name": "Analyser Corrélations",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "{{ $node[\"Credentials\"].json[\"telegram_chat_id\"] }}",
+        "text": "📊 **Rapport de marché crypto - {{ $node[\"Générer Rapport\"].json[\"report_date\"] }}**\n\n**Sentiment global du marché**: {{ $node[\"Générer Rapport\"].json[\"report\"][\"market_trends\"][\"overall_market_sentiment\"] }}\n**Indice Fear & Greed**: {{ $node[\"Générer Rapport\"].json[\"report\"][\"market_summary\"][\"fear_greed_index\"] }} ({{ $node[\"Générer Rapport\"].json[\"report\"][\"market_summary\"][\"fear_greed_label\"] }})\n\n**Résumé des cryptos:**\n{% for symbol, data in $node[\"Générer Rapport\"].json[\"report\"][\"crypto_data\"] %}\n- {{ symbol }}: ${{ data.current_price.toFixed(2) }} ({{ data.price_change_24h.toFixed(2) }}% sur 24h) - {{ data.current_signal }}\n{% endfor %}\n\n**Tendances du marché:**\n- Signaux haussiers: {{ $node[\"Générer Rapport\"].json[\"report\"][\"market_trends\"][\"bullish_count\"] }}\n- Signaux baissiers: {{ $node[\"Générer Rapport\"].json[\"report\"][\"market_trends\"][\"bearish_count\"] }}\n- Signaux neutres: {{ $node[\"Générer Rapport\"].json[\"report\"][\"market_trends\"][\"neutral_count\"] }}\n\nConsultez le dashboard pour plus de détails.",
+        "additionalFields": {}
+      },
+      "name": "Envoyer Notification",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Collecte Prix",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Collecter Fear & Greed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collecte Prix": {
+      "main": [
+        [
+          {
+            "node": "Formater Données",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formater Données": {
+      "main": [
+        [
+          {
+            "node": "Analyser Indicateurs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyser Indicateurs": {
+      "main": [
+        [
+          {
+            "node": "Filtre jour marché",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collecter Fear & Greed": {
+      "main": [
+        [
+          {
+            "node": "Traiter Fear & Greed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtre jour marché": {
+      "main": [
+        [
+          {
+            "node": "Générer Rapport",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Analyser Corrélations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Générer Rapport": {
+      "main": [
+        [
+          {
+            "node": "Envoyer Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

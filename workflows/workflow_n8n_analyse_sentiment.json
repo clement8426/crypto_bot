@@ -1,0 +1,246 @@
+{
+  "name": "Analyse Sentiment Crypto",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.twitter.com/2/tweets/search/recent",
+        "authentication": "oAuth1",
+        "sendQuery": true,
+        "queryParametersUi": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "(bitcoin OR btc OR ethereum OR eth OR crypto OR cryptocurrency) lang:en -is:retweet"
+            },
+            {
+              "name": "max_results",
+              "value": "100"
+            },
+            {
+              "name": "tweet.fields",
+              "value": "created_at,public_metrics,author_id"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Collecte Twitter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        300,
+        300
+      ],
+      "credentials": {
+        "twitterOAuth1Api": {
+          "id": "1",
+          "name": "Twitter OAuth1 account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.huggingface.co/models/cardiffnlp/twitter-roberta-base-sentiment-latest",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "inputs",
+              "value": "={{ $json.text }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "name": "Analyse Sentiment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        700,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2",
+          "name": "HuggingFace API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extraire les données pertinentes des tweets\nconst tweets = $json.data || [];\n\nif (!tweets.length) {\n  return [];\n}\n\n// Traiter chaque tweet\nreturn tweets.map(tweet => {\n  // Déterminer les cryptos mentionnées\n  const text = tweet.text.toLowerCase();\n  const relatedCrypto = [];\n  \n  if (text.includes('bitcoin') || text.includes('btc')) relatedCrypto.push('BTC');\n  if (text.includes('ethereum') || text.includes('eth')) relatedCrypto.push('ETH');\n  if (text.includes('solana') || text.includes('sol')) relatedCrypto.push('SOL');\n  if (text.includes('cardano') || text.includes('ada')) relatedCrypto.push('ADA');\n  if (text.includes('binance') || text.includes('bnb')) relatedCrypto.push('BNB');\n  if (text.includes('polkadot') || text.includes('dot')) relatedCrypto.push('DOT');\n  if (text.includes('ripple') || text.includes('xrp')) relatedCrypto.push('XRP');\n  \n  // Si aucune crypto spécifique n'est mentionnée mais que \"crypto\" est mentionné,\n  // considérer comme général\n  if (relatedCrypto.length === 0 && (text.includes('crypto') || text.includes('cryptocurrency'))) {\n    relatedCrypto.push('GENERAL');\n  }\n  \n  return {\n    id: tweet.id,\n    text: tweet.text,\n    created_at: tweet.created_at,\n    author_id: tweet.author_id,\n    likes: tweet.public_metrics?.like_count || 0,\n    retweets: tweet.public_metrics?.retweet_count || 0,\n    replies: tweet.public_metrics?.reply_count || 0,\n    related_crypto: relatedCrypto,\n    timestamp: new Date().toISOString(),\n    source: 'twitter'\n  };\n});"
+      },
+      "name": "Formater Tweets",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "name": "Traiter par lot",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 2,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Interpréter les résultats de l'analyse de sentiment\nconst tweet = $json;\nconst sentimentResults = $node[\"Analyse Sentiment\"].json;\n\n// Vérifier si nous avons des résultats valides\nif (!sentimentResults || !sentimentResults.body || !Array.isArray(sentimentResults.body[0])) {\n  // Sentiment par défaut si l'analyse échoue\n  tweet.sentiment = 'neutral';\n  tweet.sentiment_score = 0;\n  tweet.sentiment_details = {\n    positive: 0.33,\n    neutral: 0.34,\n    negative: 0.33\n  };\n  return tweet;\n}\n\n// Extraire les scores\nconst scores = sentimentResults.body[0];\nconst sentimentMap = {\n  0: 'negative',\n  1: 'neutral',\n  2: 'positive'\n};\n\n// Trouver le sentiment dominant\nlet maxScore = -1;\nlet maxIndex = 1; // Par défaut neutre\n\nfor (let i = 0; i < scores.length; i++) {\n  if (scores[i].score > maxScore) {\n    maxScore = scores[i].score;\n    maxIndex = i;\n  }\n}\n\n// Ajouter les informations de sentiment au tweet\ntweet.sentiment = sentimentMap[maxIndex];\ntweet.sentiment_score = maxScore;\ntweet.sentiment_details = {\n  negative: scores[0].score,\n  neutral: scores[1].score,\n  positive: scores[2].score\n};\n\nreturn tweet;"
+      },
+      "name": "Interpréter Sentiment",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Sauvegarder les données sentimentales\n\nconst fs = require('fs');\nconst path = '/home/crypto_bot/data/';\nconst emotionalDataFile = path + 'emotional_data.json';\n\n// Obtenir les données sentimentales\nconst sentimentData = $items.map(item => item.json);\n\n// Charger l'historique existant\nlet historicalData = [];\ntry {\n  if (fs.existsSync(emotionalDataFile)) {\n    const content = fs.readFileSync(emotionalDataFile, 'utf8');\n    historicalData = JSON.parse(content);\n  }\n} catch (error) {\n  console.error('Erreur lors du chargement des données sentimentales:', error);\n}\n\n// Fusionner avec les nouvelles données\nconst mergedData = [...sentimentData, ...historicalData];\n\n// Limiter à 10000 entrées max\nconst limitedData = mergedData.slice(0, 10000);\n\n// Sauvegarder les données\ntry {\n  fs.writeFileSync(emotionalDataFile, JSON.stringify(limitedData, null, 2));\n  \n  console.log(`Données sentimentales mises à jour: ${sentimentData.length} nouvelles entrées, ${limitedData.length} entrées au total`);\n} catch (error) {\n  console.error('Erreur lors de la sauvegarde des données:', error);\n}\n\n// Calculer des statistiques\nconst stats = {\n  total: sentimentData.length,\n  positive: sentimentData.filter(item => item.sentiment === 'positive').length,\n  neutral: sentimentData.filter(item => item.sentiment === 'neutral').length,\n  negative: sentimentData.filter(item => item.sentiment === 'negative').length,\n  by_crypto: {}\n};\n\n// Statistiques par crypto\nconst cryptos = ['BTC', 'ETH', 'SOL', 'ADA', 'BNB', 'DOT', 'XRP', 'GENERAL'];\ncryptos.forEach(crypto => {\n  const cryptoData = sentimentData.filter(item => \n    item.related_crypto && item.related_crypto.includes(crypto)\n  );\n  \n  if (cryptoData.length > 0) {\n    stats.by_crypto[crypto] = {\n      total: cryptoData.length,\n      positive: cryptoData.filter(item => item.sentiment === 'positive').length,\n      neutral: cryptoData.filter(item => item.sentiment === 'neutral').length,\n      negative: cryptoData.filter(item => item.sentiment === 'negative').length,\n    };\n  }\n});\n\nreturn {\n  success: true,\n  timestamp: new Date().toISOString(),\n  stats: stats\n};"
+      },
+      "name": "Sauvegarder Données",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "{{ $node[\"Credentials\"].json[\"telegram_chat_id\"] }}",
+        "text": "📊 **Analyse Sentimentale Crypto - {{ $formatDate(new Date(), 'DD/MM/YYYY HH:mm') }}**\n\n**Résumé:**\n- Total des tweets analysés: {{ $node[\"Sauvegarder Données\"].json[\"stats\"][\"total\"] }}\n- Sentiment positif: {{ $node[\"Sauvegarder Données\"].json[\"stats\"][\"positive\"] }} ({{ Math.round($node[\"Sauvegarder Données\"].json[\"stats\"][\"positive\"] / $node[\"Sauvegarder Données\"].json[\"stats\"][\"total\"] * 100) }}%)\n- Sentiment neutre: {{ $node[\"Sauvegarder Données\"].json[\"stats\"][\"neutral\"] }} ({{ Math.round($node[\"Sauvegarder Données\"].json[\"stats\"][\"neutral\"] / $node[\"Sauvegarder Données\"].json[\"stats\"][\"total\"] * 100) }}%)\n- Sentiment négatif: {{ $node[\"Sauvegarder Données\"].json[\"stats\"][\"negative\"] }} ({{ Math.round($node[\"Sauvegarder Données\"].json[\"stats\"][\"negative\"] / $node[\"Sauvegarder Données\"].json[\"stats\"][\"total\"] * 100) }}%)\n\n**Par crypto:**\n{% for crypto, data in $node[\"Sauvegarder Données\"].json[\"stats\"][\"by_crypto\"] %}\n- {{ crypto }}: {{ data.positive > data.negative ? \"📈 Positif\" : data.negative > data.positive ? \"📉 Négatif\" : \"➖ Neutre\" }} ({{ data.total }} tweets)\n{% endfor %}\n\nConsultez le dashboard pour plus de détails.",
+        "additionalFields": {}
+      },
+      "name": "Envoyer Notification",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Collecte Twitter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collecte Twitter": {
+      "main": [
+        [
+          {
+            "node": "Formater Tweets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formater Tweets": {
+      "main": [
+        [
+          {
+            "node": "Traiter par lot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traiter par lot": {
+      "main": [
+        [
+          {
+            "node": "Analyse Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyse Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Interpréter Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpréter Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Sauvegarder Données",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sauvegarder Données": {
+      "main": [
+        [
+          {
+            "node": "Envoyer Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

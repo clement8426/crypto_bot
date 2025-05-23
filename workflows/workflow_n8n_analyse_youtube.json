@@ -1,0 +1,282 @@
+{
+  "name": "Analyse YouTube Crypto",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 12
+            }
+          ]
+        }
+      },
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "queryAuth",
+        "sendQuery": true,
+        "queryParametersUi": {
+          "parameters": [
+            {
+              "name": "part",
+              "value": "snippet"
+            },
+            {
+              "name": "q",
+              "value": "bitcoin ethereum crypto market analysis"
+            },
+            {
+              "name": "type",
+              "value": "video"
+            },
+            {
+              "name": "order",
+              "value": "date"
+            },
+            {
+              "name": "maxResults",
+              "value": "10"
+            },
+            {
+              "name": "publishedAfter",
+              "value": "={{ $formatDate(new Date(Date.now() - 24*60*60*1000), \"YYYY-MM-DD\") + \"T00:00:00Z\" }}"
+            },
+            {
+              "name": "key",
+              "value": "={{ $node[\"Credentials\"].json[\"youtube_api_key\"] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Recherche YouTube",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extraire les vidéos pertinentes\nconst videos = $json.items || [];\n\nif (!videos.length) {\n  return [];\n}\n\n// Charger les vidéos déjà traitées\nconst fs = require('fs');\nconst path = '/home/crypto_bot/data/';\nconst processedVideosFile = path + 'processed_videos.json';\n\nlet processedVideos = [];\ntry {\n  if (fs.existsSync(processedVideosFile)) {\n    const content = fs.readFileSync(processedVideosFile, 'utf8');\n    processedVideos = JSON.parse(content);\n  }\n} catch (error) {\n  console.error('Erreur lors du chargement des vidéos traitées:', error);\n}\n\n// Filtrer les vidéos déjà traitées\nconst processedIds = new Set(processedVideos.map(v => v.id));\nconst newVideos = videos.filter(video => !processedIds.has(video.id.videoId));\n\nconsole.log(`Trouvé ${videos.length} vidéos, dont ${newVideos.length} nouvelles`);\n\n// Formater les nouvelles vidéos\nreturn newVideos.map(video => {\n  // Déterminer les cryptos mentionnées\n  const title = video.snippet.title.toLowerCase();\n  const description = video.snippet.description.toLowerCase();\n  const content = title + ' ' + description;\n  \n  const relatedCrypto = [];\n  \n  if (content.includes('bitcoin') || content.includes('btc')) relatedCrypto.push('BTC');\n  if (content.includes('ethereum') || content.includes('eth')) relatedCrypto.push('ETH');\n  if (content.includes('solana') || content.includes('sol')) relatedCrypto.push('SOL');\n  if (content.includes('cardano') || content.includes('ada')) relatedCrypto.push('ADA');\n  if (content.includes('binance') || content.includes('bnb')) relatedCrypto.push('BNB');\n  if (content.includes('polkadot') || content.includes('dot')) relatedCrypto.push('DOT');\n  if (content.includes('ripple') || content.includes('xrp')) relatedCrypto.push('XRP');\n  \n  // Si aucune crypto spécifique n'est mentionnée mais que \"crypto\" est mentionné,\n  // considérer comme général\n  if (relatedCrypto.length === 0 && content.includes('crypto')) {\n    relatedCrypto.push('GENERAL');\n  }\n  \n  return {\n    id: video.id.videoId,\n    title: video.snippet.title,\n    description: video.snippet.description,\n    channel_id: video.snippet.channelId,\n    channel_title: video.snippet.channelTitle,\n    published_at: video.snippet.publishedAt,\n    thumbnail: video.snippet.thumbnails.high.url,\n    related_crypto: relatedCrypto,\n    url: `https://www.youtube.com/watch?v=${video.id.videoId}`,\n    processed: false,\n    timestamp: new Date().toISOString()\n  };\n});"
+      },
+      "name": "Filtrer Vidéos",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "name": "Traiter par lot",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "python3 /home/crypto_bot/scripts/youtube_transcriber.py \"{{ $json.url }}\" \"/home/crypto_bot/data/transcripts/{{ $json.id }}.txt\""
+      },
+      "name": "Transcrire Vidéo",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "claude-3-haiku-20240307"
+            },
+            {
+              "name": "max_tokens",
+              "value": 1000
+            },
+            {
+              "name": "messages",
+              "value": "=[{\"role\":\"user\",\"content\":\"Analyse cette transcription d'une vidéo YouTube sur les cryptomonnaies et fais-en un résumé concis. Identifie les points clés, les prédictions de prix, les recommandations d'investissement et le sentiment général (positif, négatif ou neutre). Voici la transcription:\\n\\n{{ $node[\"Lire Transcription\"].json[\"content\"] }}\\n\\nFormate ta réponse comme un JSON avec les champs suivants: summary (résumé), key_points (liste de points clés), price_predictions (prédictions de prix mentionnées), investment_advice (conseils d'investissement), sentiment (positif, négatif ou neutre), confidence_score (0-100 indiquant ta confiance dans cette analyse).\\n\"}]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Analyser Contenu",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        1300,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "filePath": "={{ \"/home/crypto_bot/data/transcripts/\" + $json.id + \".txt\" }}"
+      },
+      "name": "Lire Transcription",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Traiter la réponse de Claude\nconst video = $json;\nlet analysis = {};\n\ntry {\n  // Extraire le contenu JSON de la réponse\n  const claudeResponse = $node[\"Analyser Contenu\"].json;\n  const content = claudeResponse.content[0].text;\n  \n  // Essayer de parser le JSON\n  try {\n    // Trouver le JSON dans la réponse\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      analysis = JSON.parse(jsonMatch[0]);\n    } else {\n      throw new Error(\"Format JSON non trouvé dans la réponse\");\n    }\n  } catch (parseError) {\n    console.error(\"Erreur lors du parsing JSON:\", parseError);\n    // Créer un objet d'analyse par défaut\n    analysis = {\n      summary: content.substring(0, 200) + \"...\",\n      key_points: [\"Analyse non structurée disponible\"],\n      price_predictions: [],\n      investment_advice: \"Aucun conseil d'investissement structuré disponible\",\n      sentiment: \"neutral\",\n      confidence_score: 30\n    };\n  }\n  \n  // Marquer la vidéo comme traitée\n  video.processed = true;\n  video.analysis = analysis;\n  \n  // Sauvegarder dans la liste des vidéos traitées\n  const fs = require('fs');\n  const path = '/home/crypto_bot/data/';\n  const processedVideosFile = path + 'processed_videos.json';\n  const videoAnalysisFile = path + 'video_analysis.json';\n  \n  // Charger les vidéos déjà traitées\n  let processedVideos = [];\n  try {\n    if (fs.existsSync(processedVideosFile)) {\n      const content = fs.readFileSync(processedVideosFile, 'utf8');\n      processedVideos = JSON.parse(content);\n    }\n  } catch (error) {\n    console.error('Erreur lors du chargement des vidéos traitées:', error);\n  }\n  \n  // Ajouter la nouvelle vidéo\n  processedVideos.push({\n    id: video.id,\n    title: video.title,\n    url: video.url,\n    processed_at: new Date().toISOString()\n  });\n  \n  // Limiter à 1000 vidéos max\n  const limitedVideos = processedVideos.slice(0, 1000);\n  \n  // Sauvegarder la liste des vidéos traitées\n  fs.writeFileSync(processedVideosFile, JSON.stringify(limitedVideos, null, 2));\n  \n  // Charger les analyses existantes\n  let videoAnalyses = [];\n  try {\n    if (fs.existsSync(videoAnalysisFile)) {\n      const content = fs.readFileSync(videoAnalysisFile, 'utf8');\n      videoAnalyses = JSON.parse(content);\n    }\n  } catch (error) {\n    console.error('Erreur lors du chargement des analyses vidéo:', error);\n  }\n  \n  // Ajouter la nouvelle analyse\n  videoAnalyses.unshift(video);\n  \n  // Limiter à 1000 analyses max\n  const limitedAnalyses = videoAnalyses.slice(0, 1000);\n  \n  // Sauvegarder les analyses\n  fs.writeFileSync(videoAnalysisFile, JSON.stringify(limitedAnalyses, null, 2));\n  \n  console.log(`Vidéo analysée et sauvegardée: ${video.title}`);\n  \n  return video;\n} catch (error) {\n  console.error('Erreur lors du traitement de l\\'analyse:', error);\n  return {\n    ...video,\n    error: error.message\n  };\n}"
+      },
+      "name": "Sauvegarder Analyse",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node[\"Credentials\"].json[\"telegram_chat_id\"] }}",
+        "text": "🎬 **Nouvelle analyse vidéo YouTube**\n\n**Titre**: {{ $json.title }}\n**Chaîne**: {{ $json.channel_title }}\n**URL**: {{ $json.url }}\n\n**Résumé**: {{ $json.analysis.summary }}\n\n**Points clés**:\n{% for point in $json.analysis.key_points %}\n- {{ point }}\n{% endfor %}\n\n**Sentiment**: {{ $json.analysis.sentiment === 'positive' ? '📈 Positif' : $json.analysis.sentiment === 'negative' ? '📉 Négatif' : '➖ Neutre' }} (confiance: {{ $json.analysis.confidence_score }}%)\n\n**Cryptos mentionnées**: {{ $json.related_crypto.join(', ') }}\n\nConsultez le dashboard pour plus de détails.",
+        "additionalFields": {}
+      },
+      "name": "Envoyer Notification",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        1700,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Recherche YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recherche YouTube": {
+      "main": [
+        [
+          {
+            "node": "Filtrer Vidéos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrer Vidéos": {
+      "main": [
+        [
+          {
+            "node": "Traiter par lot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traiter par lot": {
+      "main": [
+        [
+          {
+            "node": "Transcrire Vidéo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcrire Vidéo": {
+      "main": [
+        [
+          {
+            "node": "Lire Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire Transcription": {
+      "main": [
+        [
+          {
+            "node": "Analyser Contenu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyser Contenu": {
+      "main": [
+        [
+          {
+            "node": "Sauvegarder Analyse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sauvegarder Analyse": {
+      "main": [
+        [
+          {
+            "node": "Envoyer Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
